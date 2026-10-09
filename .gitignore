@@ -1,0 +1,13 @@
+# Compilados de Java, Spring y Gradle
+*.class
+*.jar
+*.war
+build/
+target/
+.gradle/
+
+# Archivos de configuración de IDEs
+.idea/
+*.iml
+.vscode/
+.netbeans/
