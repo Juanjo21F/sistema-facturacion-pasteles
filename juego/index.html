@@ -1,0 +1,244 @@
+<title>Lluvia de Pasteles</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;700&family=Nunito:wght@600;800&display=swap">
+<style>
+/* Layout: una sola columna centrada; el tablero (canvas 400x600) manda y el HUD vive encima en una franja. */
+:root {
+  --bg: #2b1731;
+  --panel: #3b2143;
+  --ink: #fff3f6;
+  --muted: #cfb3d6;
+  --pink: #ff8fb1;
+  --mint: #7fe3c8;
+  --gold: #ffd36b;
+  --danger: #ff6b5e;
+  --font-display: "Fredoka", "Trebuchet MS", system-ui, sans-serif;
+  --font-body: "Nunito", system-ui, sans-serif;
+  color-scheme: dark;
+}
+html, body { height: 100%; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-weight: 600;
+  padding-inline: 16px;
+  padding-block: 12px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  overflow-x: hidden;
+}
+.wrap { width: min(100%, 420px, calc((100vh - 24px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)) * 400 / 640)); display: flex; flex-direction: column; gap: 8px; }
+.hud { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-family: var(--font-display); font-weight: 700; font-size: 1.15rem; }
+.hud .label { display: block; font-family: var(--font-body); font-weight: 800; font-size: .68rem; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+.hud > div { min-width: 0; }
+.hud .num { font-variant-numeric: tabular-nums; }
+.lives { display: flex; gap: 4px; justify-content: flex-end; }
+.lives i { width: 18px; height: 18px; border-radius: 50%; background: var(--pink); box-shadow: inset 0 -4px 0 rgba(0,0,0,.18); transition: transform .2s, background .2s; }
+.lives i.off { background: var(--panel); box-shadow: none; transform: scale(.7); }
+.stage { position: relative; aspect-ratio: 400 / 600; border-radius: 18px; overflow: hidden; background: #3a1f40; touch-action: none; user-select: none; -webkit-user-select: none; }
+canvas { display: block; width: 100%; height: 100%; }
+.overlay { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 24px; text-align: center; background: rgba(43,23,49,.84); }
+.overlay h1 { margin: 0; font-family: var(--font-display); font-weight: 700; font-size: 2.1rem; line-height: 1.05; text-wrap: balance; color: var(--pink); }
+.overlay p { margin: 0; color: var(--muted); max-width: 30ch; line-height: 1.45; }
+.overlay .big { font-family: var(--font-display); font-size: 3rem; color: var(--gold); line-height: 1; }
+button { font: inherit; font-family: var(--font-display); font-weight: 700; font-size: 1.15rem; color: #3b1740; background: var(--mint); border: 0; border-radius: 999px; padding: 12px 30px; cursor: pointer; box-shadow: 0 5px 0 #4fb59b; transition: transform .08s, box-shadow .08s; }
+button:hover { background: #95efd6; }
+button:active { transform: translateY(4px); box-shadow: 0 1px 0 #4fb59b; }
+button:focus-visible { outline: 3px solid var(--gold); outline-offset: 3px; }
+.legend { display: flex; gap: 14px; align-items: center; justify-content: center; font-size: .8rem; color: var(--muted); flex-wrap: wrap; }
+.hint { text-align: center; font-size: .78rem; color: var(--muted); margin: 0; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="wrap">
+  <div class="hud">
+    <div><span class="label">Puntos</span><span class="num" id="score">0</span></div>
+    <div style="text-align:center"><span class="label">Récord</span><span class="num" id="best">0</span></div>
+    <div><span class="label" style="text-align:right">Vidas</span><div class="lives" id="lives"><i></i><i></i><i></i></div></div>
+  </div>
+  <div class="stage" id="stage">
+    <canvas id="c" width="400" height="600" aria-label="Tablero del juego"></canvas>
+    <div class="overlay" id="overlay">
+      <h1 id="ov-title">Lluvia de Pasteles</h1>
+      <p id="ov-text">Mueve la bandeja y atrapa los pasteles. Si cae uno al suelo o atrapas uno quemado, pierdes una vida.</p>
+      <div class="big" id="ov-score" hidden></div>
+      <button id="go" type="button">Jugar</button>
+    </div>
+  </div>
+  <p class="hint">Arrastra con el dedo o el ratón · Flechas o A / D en teclado</p>
+</div>
+
+<script>
+(function () {
+  var W = 400, H = 600;
+  var cv = document.getElementById('c'), ctx = cv.getContext('2d');
+  var elScore = document.getElementById('score'), elBest = document.getElementById('best');
+  var elLives = document.getElementById('lives').children;
+  var ov = document.getElementById('overlay'), btn = document.getElementById('go');
+  var ovTitle = document.getElementById('ov-title'), ovText = document.getElementById('ov-text'), ovScore = document.getElementById('ov-score');
+
+  var best = 0;
+  try { best = parseInt(localStorage.getItem('lluvia-pasteles-best') || '0', 10) || 0; } catch (e) {}
+  elBest.textContent = best;
+
+  var C = { pink: '#ff8fb1', hot: '#ff5c8a', cream: '#fff0d9', choc: '#6b3a2a', mint: '#7fe3c8', gold: '#ffd36b', wrap: '#7fe3c8', bad: '#2a1a1a' };
+
+  var state = 'ready', score, lives, items, parts, floaters, spawnT, time, tray, keys = {}, shake, combo;
+
+  function reset() {
+    score = 0; lives = 3; items = []; parts = []; floaters = []; spawnT = 0.6; time = 0; shake = 0; combo = 0;
+    tray = { x: W / 2, w: 96, h: 16, y: H - 54, vx: 0 };
+    hud();
+  }
+  function hud() {
+    elScore.textContent = score;
+    for (var i = 0; i < 3; i++) elLives[i].className = i < lives ? '' : 'off';
+  }
+
+  // ---------- dibujo ----------
+  function drawCupcake(r) {
+    ctx.fillStyle = C.wrap; ctx.beginPath();
+    ctx.moveTo(-r * .8, 0); ctx.lineTo(r * .8, 0); ctx.lineTo(r * .55, r * .85); ctx.lineTo(-r * .55, r * .85); ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,.14)'; ctx.lineWidth = 2;
+    for (var i = -1; i <= 1; i++) { ctx.beginPath(); ctx.moveTo(i * r * .3, 2); ctx.lineTo(i * r * .22, r * .8); ctx.stroke(); }
+    ctx.fillStyle = C.pink;
+    [[-.5, -.1, .5], [.5, -.1, .5], [0, -.25, .62], [0, -.62, .42]].forEach(function (p) { ctx.beginPath(); ctx.arc(p[0] * r, p[1] * r, p[2] * r, 0, 7); ctx.fill(); });
+    ctx.fillStyle = '#e5336a'; ctx.beginPath(); ctx.arc(0, -r * 1.05, r * .2, 0, 7); ctx.fill();
+  }
+  function drawSlice(r) {
+    var a = r * 1.1;
+    ctx.fillStyle = C.cream; ctx.beginPath(); ctx.moveTo(-a, a * .45); ctx.lineTo(a, a * .45); ctx.lineTo(a, -a * .15); ctx.lineTo(-a, -a * .55); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = C.choc; ctx.fillRect(-a, a * .02, a * 2, a * .14); ctx.beginPath(); ctx.moveTo(-a, -a * .28); ctx.lineTo(a, a * .13); ctx.lineTo(a, a * .13); ctx.lineTo(-a, -a * .28); ctx.fill();
+    ctx.fillStyle = C.pink; ctx.beginPath(); ctx.moveTo(-a, -a * .55); ctx.lineTo(a, -a * .15); ctx.lineTo(a, -a * .02); ctx.lineTo(-a, -a * .42); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#e5336a'; ctx.beginPath(); ctx.arc(-a * .1, -a * .45, a * .22, 0, 7); ctx.fill();
+    ctx.fillStyle = '#3d8f5b'; ctx.beginPath(); ctx.arc(-a * .1, -a * .62, a * .08, 0, 7); ctx.fill();
+  }
+  function drawDonut(r) {
+    ctx.fillStyle = '#e0a15a'; ctx.beginPath(); ctx.arc(0, 0, r, 0, 7); ctx.fill();
+    ctx.fillStyle = C.hot; ctx.beginPath(); ctx.arc(0, -r * .06, r * .82, 0, 7); ctx.fill();
+    var cols = ['#fff', C.gold, C.mint, '#9ad0ff'];
+    for (var i = 0; i < 9; i++) { var an = i * 0.7 + 0.3, d = r * (.45 + (i % 3) * .15); ctx.save(); ctx.translate(Math.cos(an) * d, Math.sin(an) * d); ctx.rotate(an * 3); ctx.fillStyle = cols[i % 4]; ctx.fillRect(-4, -1.5, 8, 3); ctx.restore(); }
+    ctx.fillStyle = '#3a1f40'; ctx.beginPath(); ctx.arc(0, 0, r * .28, 0, 7); ctx.fill();
+  }
+  function drawBurnt(r) {
+    ctx.fillStyle = C.bad; ctx.beginPath();
+    for (var i = 0; i < 10; i++) { var an = i / 10 * 6.283, rr = r * (i % 2 ? .82 : 1.05); ctx.lineTo(Math.cos(an) * rr, Math.sin(an) * rr); }
+    ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = '#ff6b5e'; ctx.lineWidth = 3; ctx.lineCap = 'round';
+    [[-.35, -.15], [.35, -.15]].forEach(function (p) { var x = p[0] * r, y = p[1] * r, s = r * .14; ctx.beginPath(); ctx.moveTo(x - s, y - s); ctx.lineTo(x + s, y + s); ctx.moveTo(x + s, y - s); ctx.lineTo(x - s, y + s); ctx.stroke(); });
+    ctx.beginPath(); ctx.arc(0, r * .5, r * .25, 3.4, 6); ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,255,255,.28)'; ctx.lineWidth = 3;
+    var t = time * 3; ctx.beginPath(); ctx.moveTo(-r * .3, -r * 1.05);
+    ctx.bezierCurveTo(-r * .3 + Math.sin(t) * 6, -r * 1.4, -r * .1, -r * 1.5, -r * .2 + Math.cos(t) * 6, -r * 1.85); ctx.stroke();
+  }
+  var DRAW = { cupcake: drawCupcake, slice: drawSlice, donut: drawDonut, burnt: drawBurnt };
+
+  function drawBg() {
+    var g = ctx.createLinearGradient(0, 0, 0, H); g.addColorStop(0, '#4a2552'); g.addColorStop(1, '#2b1731');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = 'rgba(255,255,255,.05)';
+    for (var i = 0; i < 14; i++) { var x = (i * 71 + 20) % W, y = (i * 131 + time * 12) % H; ctx.beginPath(); ctx.arc(x, y, 2 + (i % 3), 0, 7); ctx.fill(); }
+    ctx.fillStyle = '#25122b'; ctx.fillRect(0, H - 22, W, 22);
+    ctx.fillStyle = 'rgba(255,143,177,.35)'; ctx.fillRect(0, H - 22, W, 3);
+  }
+  function drawTray() {
+    ctx.save(); ctx.translate(tray.x, tray.y);
+    ctx.fillStyle = '#b9c4d6'; ctx.beginPath(); ctx.roundRect(-tray.w / 2, 0, tray.w, tray.h, 8); ctx.fill();
+    ctx.fillStyle = '#e8eef7'; ctx.beginPath(); ctx.roundRect(-tray.w / 2 + 4, 2, tray.w - 8, 5, 3); ctx.fill();
+    ctx.fillStyle = '#8f9bb0'; ctx.fillRect(-14, tray.h, 28, 5);
+    ctx.restore();
+  }
+
+  // ---------- lógica ----------
+  var KINDS = [['cupcake', 10, 22], ['slice', 15, 20], ['donut', 25, 20]];
+  function spawn() {
+    var bad = Math.random() < Math.min(.12 + time * .004, .3), k;
+    var base = 120 + Math.min(time * 4.2, 190);
+    var it;
+    if (bad) it = { t: 'burnt', pts: 0, r: 22 };
+    else { var q = Math.random(); k = q < .45 ? KINDS[0] : q < .8 ? KINDS[1] : KINDS[2]; it = { t: k[0], pts: k[1], r: k[2] }; }
+    it.x = it.r + Math.random() * (W - it.r * 2); it.y = -30; it.vy = base * (.85 + Math.random() * .4); it.rot = (Math.random() - .5) * .5; it.spin = (Math.random() - .5) * 1.6;
+    items.push(it);
+  }
+  function burst(x, y, col, n) { for (var i = 0; i < n; i++) { var a = Math.random() * 6.283, s = 60 + Math.random() * 160; parts.push({ x: x, y: y, vx: Math.cos(a) * s, vy: Math.sin(a) * s - 80, life: .5 + Math.random() * .3, col: col }); } }
+  function say(x, y, txt, col) { floaters.push({ x: x, y: y, txt: txt, col: col, life: .8 }); }
+  function loseLife() {
+    lives--; combo = 0; shake = .25; hud();
+    if (lives <= 0) end();
+  }
+  function end() {
+    state = 'over';
+    if (score > best) { best = score; elBest.textContent = best; try { localStorage.setItem('lluvia-pasteles-best', String(best)); } catch (e) {} }
+    ovTitle.textContent = score >= best && score > 0 ? '¡Nuevo récord!' : 'Se quemó la tanda';
+    ovText.textContent = 'Terminaste con estos puntos. El récord guardado es ' + best + '.';
+    ovScore.hidden = false; ovScore.textContent = score;
+    btn.textContent = 'Otra tanda';
+    ov.hidden = false; btn.focus();
+  }
+
+  function update(dt) {
+    time += dt;
+    var dir = (keys.ArrowRight || keys.d || keys.D ? 1 : 0) - (keys.ArrowLeft || keys.a || keys.A ? 1 : 0);
+    if (dir) tray.x += dir * 520 * dt;
+    tray.x = Math.max(tray.w / 2, Math.min(W - tray.w / 2, tray.x));
+    spawnT -= dt;
+    if (spawnT <= 0) { spawn(); spawnT = Math.max(.35, .95 - time * .008) * (.7 + Math.random() * .6); }
+    for (var i = items.length - 1; i >= 0; i--) {
+      var it = items[i]; it.y += it.vy * dt; it.rot += it.spin * dt;
+      var caught = it.y + it.r * .6 >= tray.y && it.y < tray.y + tray.h && Math.abs(it.x - tray.x) < tray.w / 2 + it.r * .5;
+      if (caught) {
+        items.splice(i, 1);
+        if (it.t === 'burnt') { burst(it.x, tray.y, '#ff6b5e', 14); say(it.x, tray.y - 20, '¡Quemado!', '#ff6b5e'); loseLife(); }
+        else { combo++; var bonus = Math.min(combo - 1, 5) * 2, g = it.pts + bonus; score += g; hud(); burst(it.x, tray.y, C.gold, 10); say(it.x, tray.y - 20, '+' + g + (combo > 2 ? '  x' + combo : ''), C.gold); }
+      } else if (it.y - it.r > H - 22) {
+        items.splice(i, 1);
+        if (it.t !== 'burnt') { burst(it.x, H - 24, C.pink, 8); loseLife(); } // un pastel perdido cuesta una vida
+      }
+      if (state !== 'play') return;
+    }
+    parts = parts.filter(function (p) { p.life -= dt; p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 420 * dt; return p.life > 0; });
+    floaters = floaters.filter(function (f) { f.life -= dt; f.y -= 40 * dt; return f.life > 0; });
+    if (shake > 0) shake -= dt;
+  }
+
+  function render() {
+    ctx.save();
+    if (shake > 0) ctx.translate((Math.random() - .5) * 8, (Math.random() - .5) * 8);
+    drawBg();
+    items.forEach(function (it) { ctx.save(); ctx.translate(it.x, it.y); ctx.rotate(it.rot); DRAW[it.t](it.r); ctx.restore(); });
+    drawTray();
+    parts.forEach(function (p) { ctx.globalAlpha = Math.max(0, p.life * 1.6); ctx.fillStyle = p.col; ctx.fillRect(p.x - 2, p.y - 2, 4, 4); });
+    ctx.globalAlpha = 1;
+    ctx.font = '700 20px Fredoka, sans-serif'; ctx.textAlign = 'center';
+    floaters.forEach(function (f) { ctx.globalAlpha = Math.min(1, f.life * 2); ctx.fillStyle = f.col; ctx.fillText(f.txt, f.x, f.y); });
+    ctx.globalAlpha = 1; ctx.restore();
+  }
+
+  var last = 0;
+  function frame(ts) {
+    var dt = Math.min((ts - last) / 1000 || 0, .05); last = ts;
+    if (state === 'play') update(dt); else time += dt * .3;
+    render();
+    requestAnimationFrame(frame);
+  }
+
+  // ---------- entrada ----------
+  function pointerX(e) { var r = cv.getBoundingClientRect(); return (e.clientX - r.left) / r.width * W; }
+  cv.addEventListener('pointermove', function (e) { if (state === 'play') tray.x = pointerX(e); });
+  cv.addEventListener('pointerdown', function (e) { if (state === 'play') tray.x = pointerX(e); });
+  window.addEventListener('keydown', function (e) {
+    keys[e.key] = true;
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === ' ') e.preventDefault();
+    if (state !== 'play' && (e.key === 'Enter' || e.key === ' ') && document.activeElement !== btn) start();
+  });
+  window.addEventListener('keyup', function (e) { keys[e.key] = false; });
+  window.addEventListener('blur', function () { keys = {}; });
+  function start() { reset(); state = 'play'; ov.hidden = true; }
+  btn.addEventListener('click', start);
+
+  reset();
+  requestAnimationFrame(frame);
+})();
+</script>
