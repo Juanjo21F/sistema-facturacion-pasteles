@@ -1,0 +1,33 @@
+package com.pasteleria.facturacion.seguridad;
+
+import com.pasteleria.facturacion.modelo.enumeraciones.Rol;
+import com.pasteleria.facturacion.modelo.excepciones.AutenticacionException;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.stereotype.Component;
+
+/**
+ * SOLO PARA DESARROLLO Y PRUEBAS MANUALES: simula authcore-service con dos tokens fijos.
+ * Se activa con authcore.mock.enabled=true. NUNCA debe estar activo en producción.
+ */
+@Component
+@ConditionalOnProperty(name = "authcore.mock.enabled", havingValue = "true")
+public class AutenticadorMock extends AutenticadorBase {
+
+    private static final Logger LOG = LoggerFactory.getLogger(AutenticadorMock.class);
+
+    public AutenticadorMock() {
+        LOG.warn("authcore-service SIMULADO activo (tokens: admin-token, empleado-token). No usar en producción.");
+    }
+
+    @Override
+    protected UsuarioAutenticado consultarIdentidad(String token) {
+        return switch (token) {
+            case "admin-token" -> new UsuarioAutenticado("mock-admin-1", "admin", Rol.ADMINISTRADOR);
+            case "empleado-token" -> new UsuarioAutenticado("mock-empleado-1", "empleado", Rol.EMPLEADO);
+            default -> throw new AutenticacionException("Token inválido o expirado");
+        };
+    }
+}
